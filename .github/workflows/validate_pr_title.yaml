@@ -1,0 +1,126 @@
+name: Validate PR title
+
+on:
+  workflow_call:
+    inputs:
+      prefixes:
+        description: 'Comma-separated allowed prefixes'
+        required: true
+        type: string
+        default: 'feat:,fix:,chore:,docs:,refactor:,test:,build:,ci:'
+      case_insensitive:
+        description: 'Ignore case'
+        required: false
+        type: boolean
+        default: true
+      manage_comment:
+        description: 'Create/update/delete validation comment'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  # Needed to list, create, update, delete issue comments on PRs
+  pull-requests: write
+  contents: read
+
+jobs:
+  validate-title:
+    runs-on: ubuntu-latest
+    outputs:
+      valid: ${{ steps.validate.outputs.valid }}
+    steps:
+      - name: Compute PR title or commit message
+        id: title
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "text<<EOF" | tee -a $GITHUB_OUTPUT
+            echo "${{ github.event.pull_request.title }}" | tee -a $GITHUB_OUTPUT
+            echo "EOF" | tee -a $GITHUB_OUTPUT
+          else
+            echo "text<<EOF" | tee -a $GITHUB_OUTPUT
+            echo "${{ github.event.head_commit.message }}" | tee -a $GITHUB_OUTPUT
+            echo "EOF" | tee -a $GITHUB_OUTPUT
+          fi
+
+      - name: Validate text against prefixes
+        id: validate
+        env:
+          PREFIXES: ${{ inputs.prefixes }}
+          CASE_INSENSITIVE: ${{ inputs.case_insensitive }}
+        run: |
+          TEXT="${{ steps.title.outputs.text }}"
+          if [ "${CASE_INSENSITIVE}" = "true" ]; then
+            TEXT_LOWER="$(printf '%s' "$TEXT" | tr '[:upper:]' '[:lower:]')"
+          else
+            TEXT_LOWER="$TEXT"
+          fi
+
+          printf $'TEXT_LOWER: "%s"\n' "${TEXT_LOWER}"
+
+          IFS=',' read -r -a arr <<< "$PREFIXES"
+
+          match="false"
+          for p in "${arr[@]}"; do
+            printf $'Processing "%s"\n' "${p}"
+            if [ "${CASE_INSENSITIVE}" = "true" ]; then
+              P_LOWER="$(printf '%s' "$p" | tr '[:upper:]' '[:lower:]')"
+            else
+              P_LOWER="$p"
+            fi
+            case "$TEXT_LOWER" in
+              "$P_LOWER"*) match="true"; break ;;
+            esac
+          done
+
+          echo "Title: $TEXT"
+          echo "Allowed prefixes: $PREFIXES"
+          echo "Text: $TEXT"
+          echo "valid=$match" | tee -a $GITHUB_OUTPUT
+
+      - name: Insert/delete validation comment
+        if: inputs.manage_comment == true && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- pr-title-validation -->';
+            const { owner, repo, number } = context.issue;
+
+            // Paginate through all comments to find the marker
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner, repo, issue_number: number, per_page: 100 }
+            );
+            const existing = comments.find(c => typeof c.body === 'string' && c.body.includes(marker));
+
+            const isValid = "${{ steps.validate.outputs.valid }}".toLowerCase() === "true";
+
+            if (isValid) {
+              // Delete stale comment when valid
+              if (existing) {
+                await github.rest.issues.deleteComment({
+                  owner, repo, comment_id: existing.id
+                });
+                core.info(`Deleted validation comment ${existing.id}`);
+              } else {
+                core.info('No validation comment to delete.');
+              }
+            } else {
+              // Create or update the canonical comment
+              const body = `${marker}
+              ❌ The title must start with one of: \`${{ inputs.prefixes }}\`.
+              Current: \`${{ steps.title.outputs.text }}\`
+              Please update the title and re-run the checks.`;
+
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner, repo, comment_id: existing.id, body
+                });
+                core.info(`Updated validation comment ${existing.id}`);
+              } else {
+                const res = await github.rest.issues.createComment({
+                  owner, repo, issue_number: number, body
+                });
+                core.info(`Created validation comment ${res.data.id}`);
+              }
+            }
