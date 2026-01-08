@@ -30,9 +30,9 @@ jobs:
       - name: Extract PR title
         id: title
         run: |
-          echo "title<<EOF" >> $GITHUB_OUTPUT
-          echo "${{ github.event.pull_request.title }}" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "title<<EOF" | tee -a $GITHUB_OUTPUT
+          echo "${{ github.event.pull_request.title }}" | tee -a $GITHUB_OUTPUT
+          echo "EOF" | tee -a $GITHUB_OUTPUT
 
       - name: Validate title
         id: validate
@@ -41,7 +41,6 @@ jobs:
           CASE_INSENSITIVE: ${{ inputs.case_insensitive }}
         run: |
           TITLE="${{ steps.title.outputs.title }}"
-          PREFIXES="${PREFIXES}"
 
           if [ "${CASE_INSENSITIVE}" = "true" ]; then
             TITLE_LOWER="$(printf '%s' "$TITLE" | tr '[:upper:]' '[:lower:]')"
@@ -49,10 +48,13 @@ jobs:
             TITLE_LOWER="$TITLE"
           fi
 
+          printf $'TITLE_LOWER: "%s"\n' "${TITLE_LOWER}"
+
           IFS=',' read -r -a arr <<< "$PREFIXES"
 
           match="false"
           for p in "${arr[@]}"; do
+            printf $'Processing "%s"\n' "${p}"
             if [ "${CASE_INSENSITIVE}" = "true" ]; then
               P_LOWER="$(printf '%s' "$p" | tr '[:upper:]' '[:lower:]')"
             else
@@ -69,10 +71,10 @@ jobs:
           echo "Match: $match"
 
           if [ "$match" != "true" ]; then
-            echo "valid=false" >> $GITHUB_OUTPUT
+            echo "valid=false" | tee -a $GITHUB_OUTPUT
             exit 1
           else
-            echo "valid=true" >> $GITHUB_OUTPUT
+            echo "valid=true" | tee -a $GITHUB_OUTPUT
           fi
 
       - name: Comment on PR if invalid
