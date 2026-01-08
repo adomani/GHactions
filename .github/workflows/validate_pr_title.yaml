@@ -78,7 +78,7 @@ jobs:
           echo "Text: $TEXT"
           echo "valid=$match" | tee -a $GITHUB_OUTPUT
 
-      - name: Upsert/delete validation comment
+      - name: Insert/delete validation comment
         if: inputs.manage_comment == true && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
