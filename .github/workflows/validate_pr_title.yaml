@@ -1,0 +1,91 @@
+name: Validate PR title
+
+on:
+  workflow_call:
+    inputs:
+      prefixes:
+        description: 'Comma-separated allowed prefixes'
+        required: true
+        type: string
+        default: 'feat:,fix:,chore:,docs:,refactor:,test:,build:,ci:'
+      case_insensitive:
+        description: 'Set to true to ignore case'
+        required: false
+        type: boolean
+        default: true
+      comment_on_failure:
+        description: 'Add a PR comment when invalid'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  validate-title:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract PR title
+        id: title
+        run: |
+          echo "title<<EOF" >> $GITHUB_OUTPUT
+          echo "${{ github.event.pull_request.title }}" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Validate title
+        id: validate
+        env:
+          PREFIXES: ${{ inputs.prefixes }}
+          CASE_INSENSITIVE: ${{ inputs.case_insensitive }}
+        run: |
+          TITLE="${{ steps.title.outputs.title }}"
+          PREFIXES="${PREFIXES}"
+
+          if [ "${CASE_INSENSITIVE}" = "true" ]; then
+            TITLE_LOWER="$(printf '%s' "$TITLE" | tr '[:upper:]' '[:lower:]')"
+          else
+            TITLE_LOWER="$TITLE"
+          fi
+
+          IFS=',' read -r -a arr <<< "$PREFIXES"
+
+          match="false"
+          for p in "${arr[@]}"; do
+            if [ "${CASE_INSENSITIVE}" = "true" ]; then
+              P_LOWER="$(printf '%s' "$p" | tr '[:upper:]' '[:lower:]')"
+            else
+              P_LOWER="$p"
+            fi
+
+            case "$TITLE_LOWER" in
+              "$P_LOWER"*) match="true"; break ;;
+            esac
+          done
+
+          echo "Title: $TITLE"
+          echo "Allowed prefixes: $PREFIXES"
+          echo "Match: $match"
+
+          if [ "$match" != "true" ]; then
+            echo "valid=false" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "valid=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Comment on PR if invalid
+        if: failure() && inputs.comment_on_failure == true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo, number } = context.issue;
+            const prefixes = "${{ inputs.prefixes }}";
+            const body = `❌ The PR title must start with one of the allowed prefixes:\n${prefixes}\nPlease update the title and re-run the checks.`;
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: number,
+              body
+            });
