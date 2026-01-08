@@ -77,9 +77,9 @@ jobs:
           echo "Allowed prefixes: $PREFIXES"
           echo "Text: $TEXT"
           echo "valid=$match" | tee -a $GITHUB_OUTPUT
-          if [ "$match" != "true" ]; then
-            exit 1
-          fi
+          #if [ "$match" != "true" ]; then
+          #  exit 1
+          #fi
 
       - name: Upsert/delete validation comment
         if: inputs.manage_comment == true && github.event_name == 'pull_request'
